@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write      # 允许同步代码、Tags 和发布 Release
-  workflows: write     # 必须开启，用于同步包含工作流文件的标签
+  workflows: write     # 必须开启，解决同步包含工作流文件的标签时的权限问题
 
 jobs:
   sync-and-release:
@@ -28,16 +28,17 @@ jobs:
         env:
           UPSTREAM_REPO: "MHSanaei/3x-ui" # 原作者仓库
         run: |
-          # 添加原厂远程库
+          # 修复点：先移除可能存在的远程库，防止出现 "already exists" 错误
+          git remote remove upstream || true
           git remote add upstream https://github.com/$UPSTREAM_REPO.git
           
-          # 1. 同步主分支代码 (保持你的 main 分支与原厂一致)
+          # 1. 同步主分支代码
           git fetch upstream main
           git checkout main
           git merge upstream/main --ff-only || echo "代码已是最新"
           git push origin main
 
-          # 2. 同步所有标签 (Tags)
+          # 2. 强制同步所有标签 (Tags)
           git fetch upstream --tags
           git push origin --tags --force
 
@@ -56,7 +57,7 @@ jobs:
           else
             echo "正在搬运 $LATEST_TAG 的 Release 附件..."
             
-            # 下载原厂附件
+            # 下载原厂附件 (如 .deb, .zip 等)
             mkdir -p ./downloads
             gh release download $LATEST_TAG --repo $UPSTREAM_REPO --dir ./downloads
 
@@ -64,7 +65,7 @@ jobs:
             TITLE=$(gh release view $LATEST_TAG --repo $UPSTREAM_REPO --json name --template '{{.name}}')
             BODY=$(gh release view $LATEST_TAG --repo $UPSTREAM_REPO --json body --template '{{.body}}')
 
-            # 在你的仓库发布同样的 Release
+            # 在你的仓库发布同样的 Release 并上传所有附件
             gh release create $LATEST_TAG ./downloads/* --title "$TITLE" --notes "$BODY"
             echo "搬运完成！"
           fi
