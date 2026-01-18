@@ -1,0 +1,70 @@
+name: 全自动项目同步机器人
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # 每天北京时间 14:00 自动检查更新
+  workflow_dispatch:    # 支持手动点击按钮触发
+
+permissions:
+  contents: write      # 允许同步代码、Tags 和发布 Release
+  workflows: write     # 必须开启，用于同步包含工作流文件的标签
+
+jobs:
+  sync-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: 配置 Git 环境
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+      - name: 同步上游代码及标签
+        env:
+          UPSTREAM_REPO: "MHSanaei/3x-ui" # 原作者仓库
+        run: |
+          # 添加原厂远程库
+          git remote add upstream https://github.com/$UPSTREAM_REPO.git
+          
+          # 1. 同步主分支代码 (保持你的 main 分支与原厂一致)
+          git fetch upstream main
+          git checkout main
+          git merge upstream/main --ff-only || echo "代码已是最新"
+          git push origin main
+
+          # 2. 同步所有标签 (Tags)
+          git fetch upstream --tags
+          git push origin --tags --force
+
+      - name: 检查并搬运 Release 附件
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPO: "MHSanaei/3x-ui"
+        run: |
+          # 获取原厂最新的 Tag
+          LATEST_TAG=$(gh release view --repo $UPSTREAM_REPO --json tagName --template '{{.tagName}}')
+          echo "上游最新版本: $LATEST_TAG"
+
+          # 检查你的仓库是否已经有了这个 Release
+          if gh release view $LATEST_TAG >/dev/null 2>&1; then
+            echo "版本 $LATEST_TAG 的 Release 已存在，跳过搬运。"
+          else
+            echo "正在搬运 $LATEST_TAG 的 Release 附件..."
+            
+            # 下载原厂附件
+            mkdir -p ./downloads
+            gh release download $LATEST_TAG --repo $UPSTREAM_REPO --dir ./downloads
+
+            # 获取原厂 Release 的标题和详情
+            TITLE=$(gh release view $LATEST_TAG --repo $UPSTREAM_REPO --json name --template '{{.name}}')
+            BODY=$(gh release view $LATEST_TAG --repo $UPSTREAM_REPO --json body --template '{{.body}}')
+
+            # 在你的仓库发布同样的 Release
+            gh release create $LATEST_TAG ./downloads/* --title "$TITLE" --notes "$BODY"
+            echo "搬运完成！"
+          fi
